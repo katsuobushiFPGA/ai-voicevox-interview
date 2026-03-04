@@ -42,7 +42,7 @@ async function fetchWithRetry(
 export async function POST(request: NextRequest) {
   const baseUrl =
     process.env.OLLAMA_BASE_URL || "http://localhost:11434";
-  const model = process.env.OLLAMA_MODEL || "gemma2";
+  const model = process.env.OLLAMA_MODEL || "gemma3:4b";
 
   console.log(`[evaluate] Using Ollama at: ${baseUrl}, model: ${model}`);
 

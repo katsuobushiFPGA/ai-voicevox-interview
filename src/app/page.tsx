@@ -12,9 +12,14 @@ import {
 export default function HomePage() {
   const router = useRouter();
   const [questionCount, setQuestionCount] = useState(DEFAULT_QUESTION_COUNT);
+  const [deepDiveMode, setDeepDiveMode] = useState(false);
 
   const handleStart = () => {
-    router.push(`/interview?count=${questionCount}`);
+    const params = new URLSearchParams({
+      count: String(questionCount),
+      ...(deepDiveMode ? { deepDive: "1" } : {}),
+    });
+    router.push(`/interview?${params.toString()}`);
   };
 
   return (
@@ -84,6 +89,35 @@ export default function HomePage() {
           <div className="flex justify-between text-xs text-gray-400 mt-1">
             <span>{MIN_QUESTION_COUNT}</span>
             <span>{MAX_QUESTION_COUNT}</span>
+          </div>
+        </div>
+
+        {/* 深掘りモード */}
+        <div className="bg-white rounded-2xl border-2 border-green-200 p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-700">
+                深掘りモード
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                ONにすると、回答に対してAIが追加で深掘り質問をします
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={deepDiveMode}
+              onClick={() => setDeepDiveMode(!deepDiveMode)}
+              className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 ${
+                deepDiveMode ? "bg-green-500" : "bg-gray-300"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  deepDiveMode ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
           </div>
         </div>
 

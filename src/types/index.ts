@@ -54,6 +54,8 @@ export type InterviewPhase =
   | "greeting"
   | "questioning"
   | "listening"
+  | "followup"
+  | "followup-listening"
   | "transitioning"
   | "evaluating"
   | "result";
@@ -64,4 +66,5 @@ export interface InterviewState {
   questions: Question[];
   answers: Answer[];
   evaluation: EvaluationResult | null;
+  followUpText: string | null; // 深掘り質問テキスト（ずんだもん口調）
 }

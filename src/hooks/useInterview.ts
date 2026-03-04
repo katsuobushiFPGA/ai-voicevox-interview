@@ -15,6 +15,7 @@ const initialState: InterviewState = {
   questions: [],
   answers: [],
   evaluation: null,
+  followUpText: null,
 };
 
 export interface NextQuestionResult {
@@ -22,15 +23,23 @@ export interface NextQuestionResult {
   question: Question | null;
 }
 
+export interface FollowUpResult {
+  followUpQuestion: string;
+  zundamonText: string;
+}
+
 interface InterviewHook {
   state: InterviewState;
   phase: InterviewPhase;
   currentQuestion: Question | null;
   progress: { current: number; total: number };
-  startInterview: (questionCount: number) => Promise<void>;
+  deepDiveMode: boolean;
+  startInterview: (questionCount: number, deepDive?: boolean) => Promise<void>;
   setPhase: (phase: InterviewPhase) => void;
   submitAnswer: (transcript: string) => void;
+  submitFollowUpAnswer: (transcript: string) => void;
   nextQuestion: () => NextQuestionResult;
+  generateFollowUp: () => Promise<FollowUpResult>;
   evaluate: () => Promise<EvaluationResult>;
   reset: () => void;
   isLoading: boolean;
@@ -43,13 +52,13 @@ export function useInterview(): InterviewHook {
   const [error, setError] = useState<string | null>(null);
 
   // ─── refs で最新の状態を追跡 ───
-  // 重要: useEffect による同期は使わない。
-  // 各ミューテーション関数内で直接 ref を更新する（setState の遅延実行に依存しない）。
   const questionsRef = useRef<Question[]>([]);
   const currentIndexRef = useRef(0);
   const answersRef = useRef<Answer[]>([]);
+  const deepDiveModeRef = useRef(false);
 
   const phase = state.phase;
+  const deepDiveMode = deepDiveModeRef.current;
 
   const currentQuestion =
     state.questions[state.currentQuestionIndex] ?? null;
@@ -63,21 +72,21 @@ export function useInterview(): InterviewHook {
     setState((prev) => ({ ...prev, phase }));
   }, []);
 
-  const startInterview = useCallback(async (questionCount: number) => {
+  const startInterview = useCallback(async (questionCount: number, deepDive: boolean = false) => {
     setIsLoading(true);
     setError(null);
+    deepDiveModeRef.current = deepDive;
 
     try {
       const res = await fetch(`/api/questions?count=${questionCount}`);
       if (!res.ok) throw new Error("質問の取得に失敗しました");
       const data = await res.json();
 
-      // ref を先に更新（setState の処理タイミングに依存しない）
       questionsRef.current = data.questions;
       currentIndexRef.current = 0;
       answersRef.current = [];
 
-      console.log(`[useInterview] startInterview: loaded ${data.questions.length} questions`);
+      console.log(`[useInterview] startInterview: loaded ${data.questions.length} questions, deepDive=${deepDive}`);
 
       setState({
         phase: "greeting",
@@ -85,6 +94,7 @@ export function useInterview(): InterviewHook {
         questions: data.questions,
         answers: [],
         evaluation: null,
+        followUpText: null,
       });
     } catch (e) {
       const message =
@@ -96,7 +106,6 @@ export function useInterview(): InterviewHook {
   }, []);
 
   const submitAnswer = useCallback((transcript: string) => {
-    // ref から直接読み取って answer を構築（setState updater 内に依存しない）
     const question = questionsRef.current[currentIndexRef.current];
     if (!question) {
       console.warn("[useInterview] submitAnswer: no current question found");
@@ -110,7 +119,6 @@ export function useInterview(): InterviewHook {
     };
 
     const newAnswers = [...answersRef.current, answer];
-    // ref を同期的に更新
     answersRef.current = newAnswers;
 
     console.log(`[useInterview] submitAnswer: answered Q${question.id}, total answers=${newAnswers.length}, currentIndex=${currentIndexRef.current}`);
@@ -122,8 +130,69 @@ export function useInterview(): InterviewHook {
     }));
   }, []);
 
+  /** 深掘り質問をLLMで生成 */
+  const generateFollowUp = useCallback(async (): Promise<FollowUpResult> => {
+    const latestAnswer = answersRef.current[answersRef.current.length - 1];
+    if (!latestAnswer) {
+      throw new Error("回答がありません");
+    }
+
+    console.log(`[useInterview] generateFollowUp: question="${latestAnswer.question.substring(0, 30)}...", answer="${latestAnswer.transcript.substring(0, 30)}..."`);
+
+    const res = await fetch("/api/followup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question: latestAnswer.question,
+        answer: latestAnswer.transcript,
+      }),
+    });
+
+    const data = await res.json();
+
+    console.log(`[useInterview] generateFollowUp: got "${data.zundamonText?.substring(0, 40)}..."`);
+
+    setState((prev) => ({
+      ...prev,
+      phase: "followup" as InterviewPhase,
+      followUpText: data.zundamonText,
+    }));
+
+    return data as FollowUpResult;
+  }, []);
+
+  /** 深掘り質問への回答を追記 */
+  const submitFollowUpAnswer = useCallback((transcript: string) => {
+    const answers = answersRef.current;
+    if (answers.length === 0) {
+      console.warn("[useInterview] submitFollowUpAnswer: no answers to append to");
+      return;
+    }
+
+    // 最後の回答のtranscriptに深掘りQ&Aを追記
+    const lastIdx = answers.length - 1;
+    const lastAnswer = answers[lastIdx];
+    const followUpText = state.followUpText || "（深掘り質問）";
+    const updatedTranscript = `${lastAnswer.transcript}\n\n【深掘り質問】${followUpText}\n【深掘り回答】${transcript}`;
+
+    const updatedAnswers = [...answers];
+    updatedAnswers[lastIdx] = {
+      ...lastAnswer,
+      transcript: updatedTranscript,
+    };
+    answersRef.current = updatedAnswers;
+
+    console.log(`[useInterview] submitFollowUpAnswer: appended followup to Q${lastAnswer.questionId}`);
+
+    setState((prev) => ({
+      ...prev,
+      answers: updatedAnswers,
+      followUpText: null,
+      phase: "transitioning" as InterviewPhase,
+    }));
+  }, [state.followUpText]);
+
   const nextQuestion = useCallback((): NextQuestionResult => {
-    // ref から直接読み取る（setState のアップデーターに依存しない）
     const questions = questionsRef.current;
     const currentIdx = currentIndexRef.current;
     const nextIndex = currentIdx + 1;
@@ -132,7 +201,6 @@ export function useInterview(): InterviewHook {
 
     if (nextIndex < questions.length) {
       const nextQ = questions[nextIndex];
-      // ref を同期的に更新（useEffect 経由ではない）
       currentIndexRef.current = nextIndex;
 
       console.log(`[useInterview] nextQuestion: hasMore=true, nextQ.id=${nextQ.id}`);
@@ -199,6 +267,7 @@ export function useInterview(): InterviewHook {
     questionsRef.current = [];
     currentIndexRef.current = 0;
     answersRef.current = [];
+    deepDiveModeRef.current = false;
     setState(initialState);
     setError(null);
     setIsLoading(false);
@@ -209,10 +278,13 @@ export function useInterview(): InterviewHook {
     phase,
     currentQuestion,
     progress,
+    deepDiveMode,
     startInterview,
     setPhase,
     submitAnswer,
+    submitFollowUpAnswer,
     nextQuestion,
+    generateFollowUp,
     evaluate,
     reset,
     isLoading,

@@ -15,6 +15,7 @@ function InterviewContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const countParam = searchParams.get("count");
+  const deepDiveParam = searchParams.get("deepDive") === "1";
   const questionCount = countParam
     ? parseInt(countParam, 10)
     : DEFAULT_QUESTION_COUNT;
@@ -25,6 +26,8 @@ function InterviewContent() {
 
   const hasStartedRef = useRef(false);
   const isProcessingRef = useRef(false);
+  // 深掘り済みかどうか（1質問の中で1回だけ深掘りする）
+  const hasFollowedUpRef = useRef(false);
 
   // voicebox.speak を ref 経由で持つ（エフェクト依存を安定させる）
   const speakRef = useRef(voicebox.speak);
@@ -37,20 +40,25 @@ function InterviewContent() {
   useEffect(() => {
     if (!hasStartedRef.current) {
       hasStartedRef.current = true;
-      interview.startInterview(questionCount);
+      interview.startInterview(questionCount, deepDiveParam);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // メインフローオーケストレーション
-  // greeting / transitioning フェーズを一箇所で処理し、
+  // greeting / transitioning / followup フェーズを一箇所で処理し、
   // 次の質問の読み上げもここで直接行う（タイミング問題を回避）
   useEffect(() => {
     if (isProcessingRef.current) return;
 
     const phase = interview.phase;
 
-    if (phase !== "greeting" && phase !== "questioning" && phase !== "transitioning") {
+    if (
+      phase !== "greeting" &&
+      phase !== "questioning" &&
+      phase !== "transitioning" &&
+      phase !== "followup"
+    ) {
       return;
     }
 
@@ -75,6 +83,7 @@ function InterviewContent() {
           // 最初の質問を読み上げ
           const q = iv.currentQuestion;
           if (q) {
+            hasFollowedUpRef.current = false;
             iv.setPhase("questioning");
             try {
               await speak(q.zundamonText);
@@ -85,8 +94,7 @@ function InterviewContent() {
           iv.setPhase("listening");
 
         } else if (phase === "questioning") {
-          // 初回以外の質問読み上げ（通常は transitioning から直接処理するが、
-          // フォールバックとして残す）
+          // 初回以外の質問読み上げ（フォールバック）
           const q = iv.currentQuestion;
           if (q) {
             try {
@@ -97,6 +105,19 @@ function InterviewContent() {
           }
           iv.setPhase("listening");
 
+        } else if (phase === "followup") {
+          // 深掘り質問の読み上げ
+          const followUpText = iv.state.followUpText;
+          if (followUpText) {
+            console.log(`[interview-flow] Speaking followup: ${followUpText.substring(0, 40)}...`);
+            try {
+              await speak(followUpText);
+            } catch {
+              // ignore
+            }
+          }
+          iv.setPhase("followup-listening");
+
         } else if (phase === "transitioning") {
           // 回答受付後の遷移
           try {
@@ -105,34 +126,27 @@ function InterviewContent() {
             // ignore
           }
 
-          // 次の質問があるか確認
-          const { hasMore, question } = iv.nextQuestion();
-          console.log(`[interview-flow] nextQuestion result: hasMore=${hasMore}, question=${question?.id ?? "null"}, totalQuestions=${iv.state.questions.length}`);
-
-          if (hasMore && question) {
-            // 次の質問を直接ここで読み上げ（questioningエフェクトに頼らない）
-            console.log(`[interview-flow] Speaking next question: ${question.zundamonText.substring(0, 30)}...`);
+          // 深掘りモードON かつ まだ深掘りしていない場合 → 深掘り質問を生成
+          if (iv.deepDiveMode && !hasFollowedUpRef.current) {
+            hasFollowedUpRef.current = true;
+            console.log(`[interview-flow] DeepDive mode: generating followup question`);
             try {
-              await speak(question.zundamonText);
+              await speak("もう少し聞きたいことがあるのだ！");
             } catch {
               // ignore
             }
-            iv.setPhase("listening");
+            try {
+              await iv.generateFollowUp();
+              // followup フェーズに遷移（↑の generateFollowUp 内で setState される）
+              // 次の useEffect トリガーで followup フェーズがハンドルされる
+            } catch (e) {
+              console.error("[interview-flow] Follow-up generation failed:", e);
+              // 深掘り失敗時はスキップして次の質問へ
+              await proceedToNextQuestion(iv, speak);
+            }
           } else {
-            // 全質問終了 → 評価
-            console.log(`[interview-flow] All questions done, starting evaluation`);
-            try {
-              await speak(
-                "全ての質問が終わったのだ！評価を計算しているのだ！少し待ってほしいのだ！"
-              );
-            } catch {
-              // ignore
-            }
-            try {
-              await iv.evaluate();
-            } catch {
-              // エラーは useInterview 内で処理
-            }
+            // 深掘り済み or 深掘りモードOFF → 次の質問へ
+            await proceedToNextQuestion(iv, speak);
           }
         }
       } finally {
@@ -143,6 +157,44 @@ function InterviewContent() {
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interview.phase]);
+
+  /** 次の質問へ進む共通処理 */
+  async function proceedToNextQuestion(
+    iv: typeof interview,
+    speak: typeof voicebox.speak
+  ) {
+    const { hasMore, question } = iv.nextQuestion();
+    console.log(
+      `[interview-flow] nextQuestion result: hasMore=${hasMore}, question=${question?.id ?? "null"}`
+    );
+
+    if (hasMore && question) {
+      hasFollowedUpRef.current = false;
+      console.log(
+        `[interview-flow] Speaking next question: ${question.zundamonText.substring(0, 30)}...`
+      );
+      try {
+        await speak(question.zundamonText);
+      } catch {
+        // ignore
+      }
+      iv.setPhase("listening");
+    } else {
+      console.log(`[interview-flow] All questions done, starting evaluation`);
+      try {
+        await speak(
+          "全ての質問が終わったのだ！評価を計算しているのだ！少し待ってほしいのだ！"
+        );
+      } catch {
+        // ignore
+      }
+      try {
+        await iv.evaluate();
+      } catch {
+        // エラーは useInterview 内で処理
+      }
+    }
+  }
 
   // 結果画面へ遷移
   useEffect(() => {
@@ -161,19 +213,27 @@ function InterviewContent() {
     if (speech.isListening) {
       speech.stopListening();
       const finalTranscript = speech.transcript + speech.interimTranscript;
-      console.log(`[interview-flow] Mic stopped. Transcript length=${finalTranscript.length}, submitting answer...`);
-      interview.submitAnswer(finalTranscript);
+      console.log(`[interview-flow] Mic stopped. Transcript length=${finalTranscript.length}, phase=${interview.phase}`);
+
+      if (interview.phase === "followup-listening") {
+        // 深掘り質問への回答
+        interview.submitFollowUpAnswer(finalTranscript);
+      } else {
+        // 通常の質問への回答
+        interview.submitAnswer(finalTranscript);
+      }
     } else {
       console.log(`[interview-flow] Mic started`);
       speech.startListening();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speech.isListening, speech.transcript, speech.interimTranscript]);
+  }, [speech.isListening, speech.transcript, speech.interimTranscript, interview.phase]);
 
   // アバターの状態
   const avatarState = (() => {
     if (voicebox.isSpeaking) return "speaking" as const;
-    if (interview.phase === "listening") return "listening" as const;
+    if (interview.phase === "listening" || interview.phase === "followup-listening")
+      return "listening" as const;
     if (interview.phase === "evaluating") return "thinking" as const;
     return "idle" as const;
   })();
@@ -191,8 +251,16 @@ function InterviewContent() {
         return speech.isListening
           ? "🔴 録音中... 回答が終わったらマイクボタンを押してください"
           : "マイクボタンを押して回答してください";
+      case "followup":
+        return "🔍 深掘り質問を読み上げています...";
+      case "followup-listening":
+        return speech.isListening
+          ? "🔴 録音中... 深掘り質問への回答が終わったらマイクボタンを押してください"
+          : "🔍 深掘り質問です。マイクボタンを押して回答してください";
       case "transitioning":
-        return "次の質問に移ります...";
+        return interview.deepDiveMode
+          ? "深掘り質問を考えています..."
+          : "次の質問に移ります...";
       case "evaluating":
         return "評価を計算しています... しばらくお待ちください";
       case "result":
@@ -207,6 +275,9 @@ function InterviewContent() {
     if (interview.phase === "greeting") {
       return "こんにちはなのだ！ずんだもんが面接官を務めるのだ！リラックスして答えてほしいのだ！";
     }
+    if (interview.phase === "followup" || interview.phase === "followup-listening") {
+      return interview.state.followUpText || "もう少し詳しく教えてほしいのだ！";
+    }
     if (interview.currentQuestion) {
       return interview.currentQuestion.zundamonText;
     }
@@ -216,7 +287,8 @@ function InterviewContent() {
     return "準備中なのだ...";
   })();
 
-  const canUseMic = interview.phase === "listening";
+  const canUseMic =
+    interview.phase === "listening" || interview.phase === "followup-listening";
 
   // エラー表示
   const errorMessage = interview.error || voicebox.error || speech.error;
@@ -226,7 +298,14 @@ function InterviewContent() {
       {/* ヘッダー */}
       <header className="bg-white/80 backdrop-blur-sm border-b border-green-200 px-6 py-3">
         <div className="max-w-2xl mx-auto flex items-center justify-between">
-          <h1 className="text-lg font-bold text-green-800">ずんだもん面接</h1>
+          <div className="flex items-center space-x-2">
+            <h1 className="text-lg font-bold text-green-800">ずんだもん面接</h1>
+            {interview.deepDiveMode && (
+              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+                🔍 深掘り
+              </span>
+            )}
+          </div>
           {interview.state.questions.length > 0 && (
             <div className="w-48">
               <ProgressBar

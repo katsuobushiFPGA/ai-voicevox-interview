@@ -78,7 +78,7 @@ src/
 │   ├── useSpeechRecognition.ts
 │   └── useVoicebox.ts
 ├── data/
-│   └── questions.ts        # 質問プール（17問・5カテゴリ）
+│   └── questions.ts        # 質問プール（27問・8カテゴリ）
 ├── lib/
 │   └── constants.ts        # 定数（SPEAKER_ID, SCORE_MAX 等）
 └── types/
@@ -89,6 +89,7 @@ src/
 
 - `InterviewPhase`: `"idle" | "greeting" | "questioning" | "listening" | "transitioning" | "evaluating" | "result"`
 - `Question`: `{ id, category, text, zundamonText }`
+- `QuestionCategory`: `"self-introduction" | "career-change" | "motivation" | "career-plan" | "experience" | "strengths" | "technical" | "reverse"`
 - `Answer`: `{ questionId, question, transcript }`
 - `EvaluationResult`: `{ scores, totalScore, maxTotalScore, overallFeedback, zundamonComment }`
 

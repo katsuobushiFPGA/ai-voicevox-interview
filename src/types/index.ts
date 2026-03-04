@@ -7,16 +7,22 @@ export interface Question {
 
 export type QuestionCategory =
   | "self-introduction"
+  | "career-change"
+  | "motivation"
+  | "career-plan"
+  | "experience"
+  | "strengths"
   | "technical"
-  | "architecture"
-  | "behavioral"
   | "reverse";
 
 export const CATEGORY_LABELS: Record<QuestionCategory, string> = {
   "self-introduction": "自己紹介",
+  "career-change": "転職理由",
+  motivation: "志望理由",
+  "career-plan": "キャリアプラン・転職の軸",
+  experience: "成功体験・失敗体験",
+  strengths: "強み・弱み",
   technical: "技術知識",
-  architecture: "設計・アーキテクチャ",
-  behavioral: "行動面接",
   reverse: "逆質問",
 };
 

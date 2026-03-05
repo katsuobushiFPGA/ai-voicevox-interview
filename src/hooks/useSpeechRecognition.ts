@@ -49,17 +49,14 @@ export function useSpeechRecognition(): SpeechRecognitionHook {
   const [interimTranscript, setInterimTranscript] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSupported, setIsSupported] = useState(false);
+  const [isSupported] = useState(() => {
+    if (typeof window !== "undefined") {
+      return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    }
+    return false;
+  });
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const manualStopRef = useRef(false);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-      setIsSupported(!!SpeechRecognition);
-    }
-  }, []);
 
   const startListening = useCallback(() => {
     if (typeof window === "undefined") return;

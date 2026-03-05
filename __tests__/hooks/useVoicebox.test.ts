@@ -15,6 +15,7 @@ class MockAudio {
 
   constructor(url?: string) {
     if (url) this.src = url;
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     currentAudioInstance = this;
   }
 }
